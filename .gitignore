@@ -5,3 +5,8 @@ AGENTS.md
 LICENSE
 Claude.md
 Codex.md
+node_modules/
+data/
+*.db
+*.db-shm
+*.db-wal

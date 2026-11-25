@@ -38,7 +38,7 @@ CREATE TABLE settings (
 
 INSERT INTO settings (key, value, description) VALUES
   ('high_value_threshold_cents', '2000000',
-   'Order total at or above this needs approval. PLACEHOLDER: PHP 20,000 [INSERT_ORDER_VALUE_THRESHOLD]'),
+   'Order total at or above PHP 20,000 needs approval'),
   ('hold_aging_hours', '4',
    'A PENDING or ON_HOLD approval older than this is flagged in Today''s Actions'),
   ('abc_a_cutoff_pct', '80',
@@ -294,12 +294,13 @@ CREATE VIEW v_product_availability AS
 SELECT p.id                               AS product_id,
        p.sku, p.name, p.category, p.unit,
        p.unit_price_cents, p.reorder_level,
-       s.on_hand, s.reserved,
-       (s.on_hand - s.reserved)           AS available,
-       CASE WHEN (s.on_hand - s.reserved) < p.reorder_level THEN 1 ELSE 0 END
+       COALESCE(s.on_hand, 0)              AS on_hand,
+       COALESCE(s.reserved, 0)             AS reserved,
+       (COALESCE(s.on_hand, 0) - COALESCE(s.reserved, 0)) AS available,
+       CASE WHEN (COALESCE(s.on_hand, 0) - COALESCE(s.reserved, 0)) < p.reorder_level THEN 1 ELSE 0 END
                                           AS is_below_reorder
 FROM products p
-JOIN stock_levels s ON s.product_id = p.id
+LEFT JOIN stock_levels s ON s.product_id = p.id
 WHERE p.is_active = 1;
 
 -- Gross sales lines: only orders that have actually been dispatched.
