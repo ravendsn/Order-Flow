@@ -54,7 +54,13 @@
     const text = await response.text();
     let payload = null;
     try { payload = text ? JSON.parse(text) : null; } catch { payload = { error: { message: text } }; }
-    if (!response.ok) throw new ApiError(payload?.error?.message || `Request failed (${response.status})`, payload, response.status);
+    if (!response.ok) {
+      const missingSameOriginApi = API.startsWith('/') && [404, 405].includes(response.status);
+      const message = missingSameOriginApi
+        ? `API route ${path} is unavailable on this host (HTTP ${response.status}). Deploy the Express API and configure this frontend to reach it.`
+        : payload?.error?.message || `Request failed (${response.status})`;
+      throw new ApiError(message, payload, response.status);
+    }
     return { value: payload?.data, meta: payload?.meta, response };
   }
 
