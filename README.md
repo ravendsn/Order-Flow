@@ -1,101 +1,52 @@
 # Order-Flow
 Web-based inventory and sales order management system uniting sales, office, and warehouse teams to replace fragmented texts, emails, and spreadsheets. Features real-time stock, order approvals, pick lists, dispatches, returns, and a dashboard for daily orders, fast-moving items, and low-stock alerts to improve fulfillment.
 
-**FOLDER STRUCTURE** # DAY 1 - #RAVEN
-order-pulse/
-├─ package.json
-├─ .env.example                      # PORT, DB_PATH, JWT/session secret
-├─ README.md                         # setup, test accounts, how to seed
+**FOLDER STRUCTURE — CURRENT IMPLEMENTATION**
+
+`Order-Flow/`
+├─ package.json / package-lock.json
+├─ .env.example
+├─ README.md
+├─ schema.sql                         # canonical SQLite schema and M7 read-only views
+├─ index.html / javascript.js / Style.css  # existing root UI scaffold
 │
 ├─ docs/
-│  ├─ sdlc/                          # planning, requirements, business rules, module list
-│  ├─ diagrams/                      # flowchart export, context/DFD, ERD, state diagrams
-│  ├─ erd.md                         # (Task 2)
-│  ├─ api.md                         # (Task 3)
-│  └─ demo-script.md
+│  ├─ api.md                           # API contract
+│  ├─ erd.md                           # schema documentation
+│  ├─ diagrams/order-flow-flowchart.md # canonical order flow
+│  ├─ demo-script.md
+│  └─ rubrics.md
 │
 ├─ server/
-│  ├─ server.js                      # starts the HTTP server
-│  ├─ app.js                         # builds the Express app, mounts module routers
-│  │
-│  ├─ config/
-│  │  ├─ env.js
-│  │  └─ constants.js                # order-value threshold, roles, status names, hold-aging hours
-│  │
-│  ├─ db/
-│  │  ├─ connection.js               # SQLite connection + transaction helper
-│  │  ├─ migrations/                 # (Task 2)
-│  │  └─ seeds/                      # beverage catalog + ~90 days of sales/returns
-│  │
+│  ├─ server.js                        # starts the HTTP server
+│  ├─ app.js                           # Express app and /api mount
+│  ├─ routes.js                         # mounts implemented module routers
+│  ├─ config/{env.js,constants.js}
+│  ├─ db/connection.js                  # SQLite connection and transactions
 │  ├─ shared/
-│  │  ├─ middleware/
-│  │  │  ├─ authenticate.js
-│  │  │  ├─ require-role.js
-│  │  │  ├─ idempotency.js           # reads the idempotency key on order submit
-│  │  │  ├─ validate.js
-│  │  │  ├─ not-found.js
-│  │  │  └─ error-handler.js
-│  │  ├─ errors/
-│  │  │  ├─ app-error.js
-│  │  │  └─ error-codes.js           # e.g. INSUFFICIENT_STOCK, INVALID_TRANSITION
-│  │  ├─ events/
-│  │  │  ├─ event-bus.js             # small internal emitter (feeds alerts/SSE)
-│  │  │  └─ event-names.js
-│  │  └─ utils/
-│  │
+│  │  ├─ audit/service.js
+│  │  ├─ events/{event-bus.js,event-names.js}
+│  │  ├─ errors/{app-error.js,error-codes.js}
+│  │  ├─ middleware/                    # auth, roles, validation, idempotency, errors
+│  │  ├─ http.js
+│  │  ├─ idempotency-store.js
+│  │  └─ utils/password.js
 │  └─ modules/
-│     ├─ access-admin/               # M1
-│     │  ├─ auth/
-│     │  ├─ users/
-│     │  ├─ audit/                   # "who / when / what" log, used by every module
-│     │  └─ tools/                   # Chaos Button, seed trigger, admin-only
-│     ├─ product-inventory/          # M2
-│     │  ├─ products/
-│     │  └─ stock/                   # sole writer of on_hand / reserved + movement history
-│     ├─ order-management/           # M3
-│     │  ├─ orders/                  # submit, reservation call, status, cancel
-│     │  ├─ customers/
-│     │  └─ unmet-demand/            # write side of the "Log unmet demand" step
-│     ├─ approval-exceptions/        # M4
-│     │  ├─ policy/                  # high-value and below-reorder rules
-│     │  └─ queue/                   # approve / reject / hold, aging approvals
-│     ├─ fulfillment/                # M5
-│     │  ├─ pick-lists/
-│     │  ├─ dispatch/
-│     │  └─ returns/                 # reason codes, restockable or not
-│     ├─ intake-bridge/              # M6 (STRETCH, safe to delete)
-│     │  └─ parser/
-│     └─ analytics-alerts/           # M7
-│        ├─ kpis/
-│        ├─ abc/
-│        ├─ days-of-stock/
-│        ├─ unmet-demand-report/
-│        ├─ actions-feed/            # "Today's Actions"
-│        └─ alerts/                  # low-stock, stuck approvals, SSE stream
+│     ├─ access-admin/routes.js         # M1
+│     ├─ product-inventory/routes.js    # M2; stock/service.js is the stock writer
+│     ├─ order-management/{routes.js,service.js}  # M3
+│     ├─ approval-exceptions/routes.js  # M4
+│     ├─ fulfillment/routes.js          # M5
+│     └─ intake-bridge/routes.js        # M6 stretch stubs
 │
-├─ client/
-│  ├─ index.html                     # login
-│  ├─ assets/css/                    # tokens.css, layout.css, components.css
-│  ├─ js/
-│  │  ├─ api/                        # fetch wrapper, one file per module
-│  │  ├─ components/                 # table, scorecard, chart wrappers, toast
-│  │  ├─ sse.js
-│  │  └─ session.js
-│  └─ pages/                         # one folder per swimlane/role
-│     ├─ agent/                      # order entry, my orders
-│     ├─ office/                     # approvals, intake (stretch)
-│     ├─ warehouse/                  # pick lists, dispatch, returns
-│     ├─ manager/                    # dashboard, Today's Actions
-│     └─ admin/                      # users, products, audit, Chaos Button
-│
-├─ scripts/
-│  ├─ seed.js
-│  └─ chaos.js                       # CLI version of the concurrency test
-│
-└─ tests/
-   ├─ reservation.concurrency.test.js
-   ├─ approval-policy.test.js
-   └─ order-lifecycle.test.js
+└─ scripts/
+   ├─ seed.js                           # schema initialization and demo data
+   └─ smoke-milestone2.js               # M1–M2 end-to-end verification
+
+The seven-module design remains the target architecture. The first six modules
+are implemented and mounted. `analytics-alerts` is intentionally not present or
+mounted yet; it is reserved for Milestone 3 and will be added without changing
+the completed M1–M2 module paths.
 
 **Database Schema**
 
