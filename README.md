@@ -79,6 +79,25 @@ Run `npm run seed` only when you intentionally want to recreate the demo
 database; it resets the configured SQLite database before inserting the sample
 accounts and historical data.
 
+## Run locally
+
+From the repository root, start the Express server:
+
+```bash
+npm start
+```
+
+Open `http://localhost:3000/`. Express serves both the frontend and `/api` from
+the same origin.
+
+To use VS Code Live Server instead, keep `npm start` running in a separate
+terminal and open `public/index.html` with Live Server. If Live Server serves
+the repository root on port 5500, the app URL is
+`http://localhost:5500/public/index.html` (use your configured port if it
+differs). The client automatically sends API requests to port 3000 for local
+Live Server origins. Do not open the repository root on port 5500; that path
+does not serve the app's `public/` assets.
+
 ## Local checks
 
 - `npm run check` — JavaScript syntax checks for the server, client, and seed script.
