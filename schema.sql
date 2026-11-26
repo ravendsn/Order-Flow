@@ -269,6 +269,28 @@ CREATE TABLE return_items (
   is_restockable INTEGER NOT NULL CHECK (is_restockable IN (0,1))
 );
 
+-- Operational feedback and product/order issue cases.
+-- This is not a stock writer; it records the reason a human needs to investigate.
+CREATE TABLE feedback_cases (
+  id           INTEGER PRIMARY KEY,
+  customer_id  INTEGER REFERENCES customers(id),
+  order_id     INTEGER REFERENCES orders(id),
+  product_id   INTEGER REFERENCES products(id),
+  created_by   INTEGER NOT NULL REFERENCES users(id),
+  assigned_to  INTEGER REFERENCES users(id),
+  case_type    TEXT NOT NULL DEFAULT 'CUSTOMER_COMPLAINT'
+               CHECK (case_type IN ('CUSTOMER_COMPLAINT','DAMAGED_GOODS','WRONG_ITEM','STOCK_DISCREPANCY','OTHER')),
+  priority     TEXT NOT NULL DEFAULT 'MEDIUM'
+               CHECK (priority IN ('LOW','MEDIUM','HIGH','URGENT')),
+  status       TEXT NOT NULL DEFAULT 'OPEN'
+               CHECK (status IN ('OPEN','IN_PROGRESS','RESOLVED','CLOSED')),
+  description  TEXT NOT NULL,
+  resolution   TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at  TEXT
+);
+
 -- =====================================================================
 -- M6  INTAKE BRIDGE  (STRETCH - safe to omit; nothing else depends on it)
 -- =====================================================================
@@ -333,3 +355,6 @@ CREATE INDEX idx_returns_order         ON returns(order_id);
 CREATE INDEX idx_return_items_return   ON return_items(return_id);
 CREATE INDEX idx_audit_entity          ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_created         ON audit_log(created_at);
+CREATE INDEX idx_feedback_status       ON feedback_cases(status, priority, created_at);
+CREATE INDEX idx_feedback_order        ON feedback_cases(order_id);
+CREATE INDEX idx_feedback_product      ON feedback_cases(product_id);

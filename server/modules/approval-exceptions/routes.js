@@ -6,6 +6,7 @@ const { requireJsonBody, parsePagination, parseBooleanQuery } = require('../../s
 const { sendData, getPositiveId, requireText } = require('../../shared/http');
 const { transaction } = require('../../db/connection');
 const { recordAudit } = require('../../shared/audit/service');
+const { publishStockChanged, publishOrderStatusChanged } = require('../../shared/events/publish');
 const stock = require('../product-inventory/stock/service');
 const { getOrder } = require('../order-management/service');
 const AppError = require('../../shared/errors/app-error');
@@ -67,6 +68,8 @@ function decide(req, res, next, action) {
       }
       return getOrder(req.db, approval.order_id);
     });
+    publishOrderStatusChanged(req.eventBus, req.db, order.id);
+    if (action === 'reject') order.items.forEach((item) => publishStockChanged(req.eventBus, req.db, item.product_id));
     return sendData(res, order);
   } catch (error) { return next(error); }
 }

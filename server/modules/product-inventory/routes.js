@@ -5,6 +5,7 @@ const { requireJsonBody, parsePagination, parseBooleanQuery, validationError } =
 const { sendData, getPositiveId, requireText, requireInteger } = require('../../shared/http');
 const { transaction } = require('../../db/connection');
 const { recordAudit } = require('../../shared/audit/service');
+const { publishStockChanged } = require('../../shared/events/publish');
 const { ensureStockRow, receiveStock, adjustStock } = require('./stock/service');
 const AppError = require('../../shared/errors/app-error');
 const ERROR_CODES = require('../../shared/errors/error-codes');
@@ -82,6 +83,7 @@ router.post('/products', requireRole('ADMIN'), requireJsonBody, (req, res, next)
       recordAudit(req.db, { actorUserId: req.user.id, action: 'PRODUCT_CREATED', entityType: 'PRODUCT', entityId: id, after: created });
       return created;
     });
+    publishStockChanged(req.eventBus, req.db, product.id);
     return sendData(res, serializeProduct(product), 201);
   } catch (error) { return next(error); }
 });
@@ -140,6 +142,7 @@ router.post('/stock/receive', requireRole('WAREHOUSE', 'ADMIN'), requireJsonBody
       recordAudit(req.db, { actorUserId: req.user.id, action: 'STOCK_RECEIVED', entityType: 'PRODUCT', entityId: productId, after: stock, note: reason });
       return stock;
     });
+    publishStockChanged(req.eventBus, req.db, productId);
     return sendData(res, result);
   } catch (error) { return next(error); }
 });
@@ -156,6 +159,7 @@ router.post('/stock/adjust', requireRole('WAREHOUSE', 'ADMIN'), requireJsonBody,
       recordAudit(req.db, { actorUserId: req.user.id, action: 'STOCK_ADJUSTED', entityType: 'PRODUCT', entityId: productId, after: stock, note: reason });
       return stock;
     });
+    publishStockChanged(req.eventBus, req.db, productId);
     return sendData(res, result);
   } catch (error) { return next(error); }
 });
