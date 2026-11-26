@@ -7,6 +7,7 @@ const { requireIdempotencyKey } = require('../../shared/middleware/idempotency')
 const { requireJsonBody, parsePagination, parseDateQuery, validationError } = require('../../shared/middleware/validate');
 const { sendData, getPositiveId, requireText } = require('../../shared/http');
 const { recordAudit } = require('../../shared/audit/service');
+const { publishStockChanged, publishOrderStatusChanged } = require('../../shared/events/publish');
 const { replayIfAvailable } = require('../../shared/idempotency-store');
 const { transaction } = require('../../db/connection');
 const AppError = require('../../shared/errors/app-error');
@@ -76,6 +77,10 @@ router.post('/orders', requireRole('AGENT', 'OFFICE'), requireJsonBody, requireI
   try {
     const result = processSubmit(req.db, { userId: req.user.id, body: req.body, idempotency: req.idempotency });
     if (result.replay) return replayIfAvailable(result.row, res);
+    if (result.status === 201 && result.body?.data) {
+      publishOrderStatusChanged(req.eventBus, req.db, result.body.data.id);
+      result.body.data.items.forEach((item) => publishStockChanged(req.eventBus, req.db, item.product_id));
+    }
     return res.status(result.status).json(result.body);
   } catch (error) { return next(error); }
 });
@@ -125,7 +130,10 @@ router.post('/orders/:id/cancel', requireRole('AGENT', 'OFFICE', 'MANAGER', 'ADM
     const record = getOrderRecord(req.db, orderId);
     ensureOrderScope(req, record);
     const reason = requireText(req.body?.reason, 'reason', { max: 300 });
-    return sendData(res, cancelOrder(req.db, { orderId, actorUserId: req.user.id, reason }));
+    const cancelled = cancelOrder(req.db, { orderId, actorUserId: req.user.id, reason });
+    publishOrderStatusChanged(req.eventBus, req.db, orderId);
+    cancelled.items.forEach((item) => publishStockChanged(req.eventBus, req.db, item.product_id));
+    return sendData(res, cancelled);
   } catch (error) { return next(error); }
 });
 

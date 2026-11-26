@@ -7,6 +7,7 @@ const { requireJsonBody, parsePagination, parseDateQuery, validationError } = re
 const { sendData, getPositiveId, requireText, requireInteger } = require('../../shared/http');
 const { transaction } = require('../../db/connection');
 const { recordAudit } = require('../../shared/audit/service');
+const { publishStockChanged, publishOrderStatusChanged } = require('../../shared/events/publish');
 const { claimIdempotency, replayIfAvailable, storeIdempotencyResponse } = require('../../shared/idempotency-store');
 const stock = require('../product-inventory/stock/service');
 const { getOrder, getOrderRecord } = require('../order-management/service');
@@ -15,6 +16,105 @@ const ERROR_CODES = require('../../shared/errors/error-codes');
 
 const router = express.Router();
 router.use(authenticate({ secret: env.sessionSecret }));
+
+const FEEDBACK_TYPES = ['CUSTOMER_COMPLAINT', 'DAMAGED_GOODS', 'WRONG_ITEM', 'STOCK_DISCREPANCY', 'OTHER'];
+const FEEDBACK_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+const FEEDBACK_STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED'];
+
+function feedbackRecord(db, id) {
+  const row = db.prepare(`SELECT f.*, c.name AS customer_name, o.order_no, p.name AS product_name,
+      creator.full_name AS creator_name, assignee.full_name AS assignee_name
+    FROM feedback_cases f
+    LEFT JOIN customers c ON c.id = f.customer_id
+    LEFT JOIN orders o ON o.id = f.order_id
+    LEFT JOIN products p ON p.id = f.product_id
+    JOIN users creator ON creator.id = f.created_by
+    LEFT JOIN users assignee ON assignee.id = f.assigned_to
+    WHERE f.id = ?`).get(id);
+  if (!row) throw new AppError(404, ERROR_CODES.NOT_FOUND, 'Feedback case not found');
+  return row;
+}
+
+router.get('/feedback-cases', requireRole('OFFICE', 'WAREHOUSE', 'MANAGER', 'ADMIN'), (req, res, next) => {
+  try {
+    const { page, limit, offset } = parsePagination(req.query);
+    const where = [];
+    const params = [];
+    if (req.query.status) {
+      if (!FEEDBACK_STATUSES.includes(String(req.query.status))) throw validationError([{ field: 'status', message: 'invalid feedback status' }]);
+      where.push('f.status = ?'); params.push(String(req.query.status));
+    }
+    if (req.query.priority) {
+      if (!FEEDBACK_PRIORITIES.includes(String(req.query.priority))) throw validationError([{ field: 'priority', message: 'invalid feedback priority' }]);
+      where.push('f.priority = ?'); params.push(String(req.query.priority));
+    }
+    if (req.query.q) {
+      const query = `%${String(req.query.q).trim()}%`;
+      where.push('(f.description LIKE ? OR c.name LIKE ? OR o.order_no LIKE ? OR p.name LIKE ?)');
+      params.push(query, query, query, query);
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = req.db.prepare(`SELECT COUNT(*) AS total FROM feedback_cases f
+      LEFT JOIN customers c ON c.id = f.customer_id LEFT JOIN orders o ON o.id = f.order_id
+      LEFT JOIN products p ON p.id = f.product_id ${clause}`).get(...params).total;
+    const rows = req.db.prepare(`SELECT f.*, c.name AS customer_name, o.order_no, p.name AS product_name,
+        creator.full_name AS creator_name, assignee.full_name AS assignee_name
+      FROM feedback_cases f
+      LEFT JOIN customers c ON c.id = f.customer_id
+      LEFT JOIN orders o ON o.id = f.order_id
+      LEFT JOIN products p ON p.id = f.product_id
+      JOIN users creator ON creator.id = f.created_by
+      LEFT JOIN users assignee ON assignee.id = f.assigned_to
+      ${clause}
+      ORDER BY CASE f.priority WHEN 'URGENT' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END, f.created_at DESC
+      LIMIT ? OFFSET ?`).all(...params, limit, offset);
+    return sendData(res, rows, 200, { page, limit, total });
+  } catch (error) { return next(error); }
+});
+
+router.post('/feedback-cases', requireRole('OFFICE', 'WAREHOUSE', 'MANAGER', 'ADMIN'), requireJsonBody, (req, res, next) => {
+  try {
+    const description = requireText(req.body?.description, 'description', { max: 1000 });
+    const caseType = String(req.body?.case_type || 'CUSTOMER_COMPLAINT').toUpperCase();
+    const priority = String(req.body?.priority || 'MEDIUM').toUpperCase();
+    if (!FEEDBACK_TYPES.includes(caseType)) throw validationError([{ field: 'case_type', message: 'invalid feedback type' }]);
+    if (!FEEDBACK_PRIORITIES.includes(priority)) throw validationError([{ field: 'priority', message: 'invalid feedback priority' }]);
+    const customerId = req.body?.customer_id ? getPositiveId(req.body.customer_id, 'customer_id') : null;
+    const orderId = req.body?.order_id ? getPositiveId(req.body.order_id, 'order_id') : null;
+    const productId = req.body?.product_id ? getPositiveId(req.body.product_id, 'product_id') : null;
+    const assignedTo = req.body?.assigned_to ? getPositiveId(req.body.assigned_to, 'assigned_to') : null;
+    const result = req.db.prepare(`INSERT INTO feedback_cases
+      (customer_id, order_id, product_id, created_by, assigned_to, case_type, priority, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(customerId, orderId, productId, req.user.id, assignedTo, caseType, priority, description);
+    const record = feedbackRecord(req.db, Number(result.lastInsertRowid));
+    recordAudit(req.db, { actorUserId: req.user.id, action: 'FEEDBACK_CASE_CREATED', entityType: 'FEEDBACK_CASE', entityId: record.id, after: record });
+    return sendData(res, record, 201);
+  } catch (error) { return next(error); }
+});
+
+router.patch('/feedback-cases/:id', requireRole('OFFICE', 'WAREHOUSE', 'MANAGER', 'ADMIN'), requireJsonBody, (req, res, next) => {
+  try {
+    const id = getPositiveId(req.params.id);
+    const before = feedbackRecord(req.db, id);
+    const fields = [];
+    const params = [];
+    if (req.body.status !== undefined) {
+      const status = String(req.body.status).toUpperCase();
+      if (!FEEDBACK_STATUSES.includes(status)) throw validationError([{ field: 'status', message: 'invalid feedback status' }]);
+      fields.push('status = ?'); params.push(status);
+      if (['RESOLVED', 'CLOSED'].includes(status)) fields.push("resolved_at = datetime('now')");
+    }
+    if (req.body.resolution !== undefined) { fields.push('resolution = ?'); params.push(req.body.resolution === null ? null : requireText(req.body.resolution, 'resolution', { max: 1000 })); }
+    if (req.body.assigned_to !== undefined) { fields.push('assigned_to = ?'); params.push(req.body.assigned_to === null ? null : getPositiveId(req.body.assigned_to, 'assigned_to')); }
+    if (!fields.length) throw validationError([{ field: 'body', message: 'must include status, resolution, or assigned_to' }]);
+    fields.push("updated_at = datetime('now')");
+    params.push(id);
+    req.db.prepare(`UPDATE feedback_cases SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+    const after = feedbackRecord(req.db, id);
+    recordAudit(req.db, { actorUserId: req.user.id, action: 'FEEDBACK_CASE_UPDATED', entityType: 'FEEDBACK_CASE', entityId: id, before, after });
+    return sendData(res, after);
+  } catch (error) { return next(error); }
+});
 
 function pickList(db, id) {
   const row = db.prepare(`SELECT pl.*, o.order_no, o.status AS order_status, c.name AS customer_name
@@ -40,6 +140,7 @@ router.post('/orders/:id/pick-list', requireRole('WAREHOUSE', 'ADMIN'), (req, re
       recordAudit(req.db, { actorUserId: req.user.id, action: 'PICK_LIST_GENERATED', entityType: 'ORDER', entityId: orderId, after: { status: 'PICKING', pick_list_id: inserted.lastInsertRowid }, createdAt: timestamp });
       return pickList(req.db, Number(inserted.lastInsertRowid));
     });
+    publishOrderStatusChanged(req.eventBus, req.db, orderId);
     return sendData(res, result, 201);
   } catch (error) { return next(error); }
 });
@@ -102,6 +203,8 @@ router.post('/orders/:id/dispatch', requireRole('WAREHOUSE', 'ADMIN'), (req, res
       recordAudit(req.db, { actorUserId: req.user.id, action: 'ORDER_DISPATCHED', entityType: 'ORDER', entityId: orderId, after: { status: 'FULFILLED', dispatch_id: dispatch.lastInsertRowid }, createdAt: timestamp });
       return getOrder(req.db, orderId);
     });
+    publishOrderStatusChanged(req.eventBus, req.db, orderId);
+    result.items.forEach((item) => publishStockChanged(req.eventBus, req.db, item.product_id));
     return sendData(res, result);
   } catch (error) { return next(error); }
 });
@@ -156,6 +259,13 @@ router.post('/orders/:id/returns', requireRole('OFFICE', 'WAREHOUSE', 'ADMIN'), 
       storeIdempotencyResponse(req.db, { userId: req.user.id, key: req.idempotency.key, endpoint, status: 201, body });
       return { status: 201, body };
     });
+    if (result.status === 201) {
+      publishOrderStatusChanged(req.eventBus, req.db, orderId);
+      req.body.items.filter((item) => item.is_restockable).forEach((item) => {
+        const orderItem = req.db.prepare('SELECT product_id FROM order_items WHERE id = ? AND order_id = ?').get(item.order_item_id, orderId);
+        if (orderItem) publishStockChanged(req.eventBus, req.db, orderItem.product_id);
+      });
+    }
     return res.status(result.status).json(result.body);
   } catch (error) { return next(error); }
 });

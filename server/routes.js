@@ -5,6 +5,7 @@ const orderRouter = require('./modules/order-management/routes');
 const approvalRouter = require('./modules/approval-exceptions/routes');
 const fulfillmentRouter = require('./modules/fulfillment/routes');
 const intakeRouter = require('./modules/intake-bridge/routes');
+const analyticsRouter = require('./modules/analytics-alerts/routes');
 
 const router = express.Router();
 router.use(publicRouter);
@@ -14,5 +15,6 @@ router.use(orderRouter);
 router.use(approvalRouter);
 router.use(fulfillmentRouter);
 router.use(intakeRouter);
+router.use(analyticsRouter);
 
 module.exports = router;
